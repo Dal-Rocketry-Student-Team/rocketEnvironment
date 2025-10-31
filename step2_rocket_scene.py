@@ -4,6 +4,14 @@ import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 import numpy as np
 
+def make_axes(L=1.0):
+    """Return 3 GLLinePlotItems for X (red), Y (green), Z (blue)."""
+    x = gl.GLLinePlotItem(pos=np.array([[0,0,0],[L,0,0]], float), color=(1,0,0,1), width=6, antialias=True)
+    y = gl.GLLinePlotItem(pos=np.array([[0,0,0],[0,L,0]], float), color=(0,1,0,1), width=6, antialias=True)
+    z = gl.GLLinePlotItem(pos=np.array([[0,0,0],[0,0,L]], float), color=(0,0,1,1), width=6, antialias=True)
+    return [x,y,z]
+
+
 def make_fin_mesh(R_BODY, *, span = 0.6, root_chord = 0.8, sweep = 0.2, thickness = 0.03):
     """
     A triangluar fin built in local coordinates
@@ -82,6 +90,12 @@ class RocketView(gl.GLViewWidget):
         nozzle.translate(0, 0, -L_NOZZLE)   # bottom-ish
         self.addItem(nozzle)
         self.parts.append(nozzle)
+
+        self.axes = make_axes(L=2.0)
+        for a in self.axes:
+            self.addItem(a)
+            self.parts.append(a)   # so they get the same rotation in _tick()
+
 
         # ---- FINS ----
         self._add_fins(
