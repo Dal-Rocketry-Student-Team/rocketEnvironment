@@ -1,4 +1,4 @@
-import sys, math, time
+import sys, math, time, serial
 from PyQt6 import QtWidgets, QtCore
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
@@ -57,6 +57,63 @@ def make_fin_mesh(R_BODY, *, span = 0.6, root_chord = 0.8, sweep = 0.2, thicknes
     ], dtype = np.int32)
 
     return gl.MeshData(vertexes = V, faces = F)
+
+def rot_to_axis_angle(R):
+    # robust axis-angle from rotation matrix
+    tr = R[0,0] + R[1,1] + R[2,2]
+    cosang = max(-1.0, min(1.0, 0.5*(tr - 1.0)))
+    ang = math.acos(cosang)
+    if ang < 1e-9:
+        return 0.0, np.array([1.0, 0.0, 0.0])
+    rx = R[2,1] - R[1,2]
+    ry = R[0,2] - R[2,0]
+    rz = R[1,0] - R[0,1]
+    axis = np.array([rx, ry, rz], float)
+    axis /= (np.linalg.norm(axis) + 1e-12)
+    return ang, axis
+
+
+class SerialWorker(QtCore.QObject):
+    newQuat = QtCore.pyqtSignal(float, float, float, float)          # w,x,y,z
+    newIMU  = QtCore.pyqtSignal(float, float, float, float, float, float)  # gx,gy,gz, ax,ay,az
+    status  = QtCore.pyqtSignal(str)
+    stopped = False
+
+    def __init__(self, port: str = "COM7", baud: int = 115200):
+        super().__init__()
+        self.port = port
+        self.baud = baud
+
+    @QtCore.pyqtSlot()
+    def run(self):
+        try:
+            self.status.emit(f"Opening {self.port} @ {self.baud}…")
+            with serial.Serial(self.port, self.baud, timeout=1) as ser:
+                self.status.emit("Connected.")
+                while not self.stopped:
+                    raw = ser.readline()
+                    if not raw:
+                        continue
+                    line = raw.decode(errors="ignore").strip()
+                    # Expect: IMU,t,q0,q1,q2,q3,gx,gy,gz,ax,ay,az
+                    if not line or not line.startswith("IMU"):
+                        continue
+                    try:
+                        parts = [p.strip() for p in line.split(",")]
+                        if len(parts) < 12:
+                            continue
+                        # q0..q3 (assumed q0 = w)
+                        w = float(parts[2]); x = float(parts[3]); y = float(parts[4]); z = float(parts[5])
+                        gx = float(parts[6]); gy = float(parts[7]); gz = float(parts[8])
+                        ax = float(parts[9]); ay = float(parts[10]); az = float(parts[11])
+                        self.newQuat.emit(w, x, y, z)
+                        self.newIMU.emit(gx, gy, gz, ax, ay, az)
+                    except Exception:
+                        # ignore malformed lines
+                        continue
+        except Exception as e:
+            self.status.emit(f"Serial error: {e}")
+
 
 class RocketView(gl.GLViewWidget):
     def __init__(self):
@@ -147,9 +204,13 @@ class RocketView(gl.GLViewWidget):
         # place it once now
         self._place_hud()
 
-        
-        # --- orientation state (identity for now; update later from serial) ---
-        self.current_R = np.eye(3)
+        self.current_R = np.eye(3)   # latest from serial
+        self.draw_R    = np.eye(3)   # what we've drawn so far
+        self._have_init_R = False    # to avoid a jump on the first packet
+        self.smooth_alpha = 0.25     # 0..1, higher = snappier
+
+        self._gyro = None
+        self._accel = None
 
         # --- start a ~60 FPS frame timer to refresh the HUD (and, later, orientation) ---
         self._timer = QtCore.QTimer(self)
@@ -188,17 +249,46 @@ class RocketView(gl.GLViewWidget):
         # --- age since last packet (will be NaN until you stamp it) ---
         age_ms = (now - self._last_pkt_t) * 1000.0 if self._last_pkt_t > 0 else float('nan')
 
-        # --- write HUD text ---
+        g_line = ""
+        if self._gyro is not None:
+            gx, gy, gz = self._gyro
+            g_line += f" | ω(dps): {gx:+6.1f} {gy:+6.1f} {gz:+6.1f}"
+        if self._accel is not None:
+            ax, ay, az = self._accel
+            g_line += f" | a(g): {ax:+5.2f} {ay:+5.2f} {az:+5.2f}"
+
+
+        # then build the text
         text = (
             f"RPY  : {r_deg:6.1f}°  {p_deg:6.1f}°  {y_deg:6.1f}°\n"
-            f"FPS  : {self._fps:5.1f}    "
-            f"PktΔ : {0 if math.isnan(age_ms) else int(age_ms)} ms"
+            f"FPS  : {self._fps:5.1f}    PktΔ : {0 if math.isnan(age_ms) else int(age_ms)} ms{g_line}"
         )
 
         if text != self._hud_last:
             self._hud_last = text
             self.hud.setText(text)
             self._place_hud()   # adjusts size + re-anchors
+
+        # --- smooth toward target orientation ---
+        R_target = self.current_R
+        R_interp = self.smooth_alpha * R_target + (1.0 - self.smooth_alpha) * self.draw_R
+
+        # re-orthonormalize (polar decomposition via SVD) so it stays a true rotation
+        U, S, Vt = np.linalg.svd(R_interp)
+        R_smooth = U @ Vt
+        if np.linalg.det(R_smooth) < 0:
+            U[:, -1] *= -1
+            R_smooth = U @ Vt
+
+        # --- rotate meshes by the delta from last frame ---
+        R_delta = R_smooth @ self.draw_R.T
+        ang, axis = rot_to_axis_angle(R_delta)
+        if ang > 1e-6:
+            deg = math.degrees(ang)
+            for item in self.parts:          # body, cone, nozzle, fins, axes
+                item.rotate(deg, axis[0], axis[1], axis[2])
+
+        self.draw_R = R_smooth
 
     def _mark_packet(self):
         self._last_pkt_t = time.time()
@@ -216,20 +306,17 @@ class RocketView(gl.GLViewWidget):
         ], dtype=float)
 
     def set_quaternion(self, w, x, y, z):
-        self.current_R = self._quat_to_rotmat(w, x, y, z)
-        self._mark_packet()
+        R = self._quat_to_rotmat(w, x, y, z)
+        self.current_R = R
+        if not self._have_init_R:
+            self.draw_R = R.copy()
+            self._have_init_R = True
+        self._last_pkt_t = time.time()
 
-    def set_euler_deg(self, roll, pitch, yaw):
-        # quick euler->quat->R if you prefer to send E,roll,pitch,yaw
-        cr, sr = math.cos(math.radians(roll)/2),  math.sin(math.radians(roll)/2)
-        cp, sp = math.cos(math.radians(pitch)/2), math.sin(math.radians(pitch)/2)
-        cy, sy = math.cos(math.radians(yaw)/2),   math.sin(math.radians(yaw)/2)
-        # intrinsic Z-Y-X (yaw, pitch, roll)
-        w = cr*cp*cy + sr*cp*sy - cr*sp*sy + sr*sp*cy
-        x = sr*cp*cy - cr*cp*sy + cr*sp*cy + sr*sp*sy
-        y = cr*sp*cy + sr*sp*sy + sr*cp*sy - cr*cp*cy
-        z = cr*cp*sy + sr*cp*cy - sr*sp*cy + cr*sp*sy
-        self.set_quaternion(w, x, y, z)
+    def set_imu(self, gx, gy, gz, ax, ay, az):
+        self._gyro = (gx, gy, gz)
+        self._accel = (ax, ay, az)
+        self._last_pkt_t = time.time()
 
     def _place_hud(self, corner="tl"):
         """Anchor HUD to a window corner."""
@@ -250,14 +337,30 @@ class RocketView(gl.GLViewWidget):
         self._place_hud()  # keep it anchored when the window changes size
 
 
-
-
-
 def main():
     app = QtWidgets.QApplication(sys.argv)
     view = RocketView()
     view.resize(1000, 700)
     view.show()
+
+    # ---- Serial wiring ----
+    thread = QtCore.QThread()
+    worker = SerialWorker(port="COM7", baud=115200)
+    worker.moveToThread(thread)
+    thread.started.connect(worker.run)
+    worker.newQuat.connect(view.set_quaternion)
+    worker.newIMU.connect(view.set_imu)
+    worker.status.connect(lambda s: print("[SERIAL]", s))
+    thread.start()
+
+    # For a clean shutdown
+    def _cleanup():
+        worker.stopped = True
+        thread.quit()
+        thread.wait(1000)
+    
+    app.aboutToQuit.connect(_cleanup)
+
     sys.exit(app.exec())
 
 if __name__ == "__main__":
