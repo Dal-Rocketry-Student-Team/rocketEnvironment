@@ -25,6 +25,15 @@ pip install -r requirements.txt
 ### 5) run the viewer
 python rocket_viz.py
 
+### 6) Set your serial port & baud:
+
+Open rocket_viz.py and find where the serial worker is created, e.g.:
+worker = SerialWorker(port="COM7", baud=115200)
+Change to your port:
+Windows: COM3, COM7, …
+Linux: /dev/ttyACM0 or /dev/ttyUSB0
+macOS: /dev/tty.usbmodem* or /dev/tty.usbserial*
+
 # What this is for
 
 Visual check of IMU fusion (quaternion/Euler) and axis alignment.
@@ -94,6 +103,16 @@ printf("IMU,%lu,%.6f,%.6f,%.6f,%.6f,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f\r\n",
 ### Translation (optional)
 
 - Rotate accel (g) from body → world, convert to m/s², subtract gravity, integrate to velocity and position (with small damping). Demonstrates drift; not an INS.
+
+# Configuration knobs (in code)
+
+- Smoothing (display): self.smooth_alpha (0..1; higher = snappier).
+
+- HUD font/position: self.hud.setStyleSheet(...), _place_hud().
+
+- Axes: make_axes(L=...).
+
+- Fins: make_fin_mesh(...) and _add_fins(n=..., span=..., sweep=..., thickness=...).
 
 # Requirements
 
