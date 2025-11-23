@@ -5,7 +5,7 @@ It listens to a serial port (USB CDC/Virtual COM), renders a simple rocket model
 
 # Quick Start
 ### 1) clone and enter
-git clone https://github.com/<you>/<repo>.git
+git clone [https://github.com/<you>/<repo>.git](https://github.com/Dal-Rocketry-Student-Team/rocketEnvironment.git)
 cd <repo>
 
 ### 2) create and activate a virtual environment
