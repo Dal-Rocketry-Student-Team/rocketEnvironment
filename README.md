@@ -1,4 +1,4 @@
-Rocket IMU Visualizer (PyQt6 + pyqtgraph)
+## Rocket IMU Visualizer (PyQt6 + pyqtgraph)
 
 A lightweight 3D visualization for real-time rocket attitude and motion using a 6-axis IMU on an STM32.
 It listens to a serial port (USB CDC/Virtual COM), renders a simple rocket model, overlays a heads-up display (HUD), and (optionally) integrates accelerometer data to show translational drift.
