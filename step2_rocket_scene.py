@@ -86,37 +86,7 @@ class SerialWorker(QtCore.QObject):
         self.baud = baud
         self._prev_tick = None
 
-    @QtCore.pyqtSlot()
-    def run(self):
-        try:
-            self.status.emit(f"Opening {self.port} @ {self.baud}…")
-            with serial.Serial(self.port, self.baud, timeout=1) as ser:
-                self.status.emit("Connected.")
-                while not self.stopped:
-                    raw = ser.readline()
-                    if not raw:
-                        continue
-                    line = raw.decode(errors="ignore").strip()
-                    # Expect: IMU,t,q0,q1,q2,q3,gx,gy,gz,ax,ay,az
-                    if not line or not line.startswith("IMU"):
-                        continue
-                    try:
-                        parts = [p.strip() for p in line.split(",")]
-                        if len(parts) < 12:
-                            continue
-                        # q0..q3 (assumed q0 = w)
-                        tick = int(parts[1])
-                        w = float(parts[2]); x = float(parts[3]); y = float(parts[4]); z = float(parts[5])
-                        gx = float(parts[6]); gy = float(parts[7]); gz = float(parts[8])
-                        ax = float(parts[9]); ay = float(parts[10]); az = float(parts[11])
-
-                        self.newQuat.emit(w, x, y, z)
-                        self.newIMU.emit(gx, gy, gz, ax, ay, az)
-
-                        if self._prev_tick is not None:
-                            dt = max(1e-4, min(0.05, (tick - self._prev_tick) / 1000.0))    # clamp to 0.1 ms .. 50 ms
-                            self.newIMUdt.emit(gx, gy, gz, ax, ay, az, dt)
-                        self._prev_tick = tick
+  
 
                     except Exception:
                         # ignore malformed lines
