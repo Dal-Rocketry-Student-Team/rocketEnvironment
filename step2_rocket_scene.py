@@ -217,7 +217,7 @@ class RocketView(gl.GLViewWidget):
         self.current_R = np.eye(3)   # latest from serial
         self.draw_R    = np.eye(3)   # what we've drawn so far
         self._have_init_R = False    # to avoid a jump on the first packet
-        self.smooth_alpha = 0.25     # 0..1, higher = snappier
+        self.smooth_alpha = 0.5     # 0..1, higher = snappier
 
         self._gyro = None
         self._accel = None
@@ -233,7 +233,7 @@ class RocketView(gl.GLViewWidget):
         self.pos = np.zeros(3)  # m
         self.vel = np.zeros(3)  # m/s
         self.draw_pos = np.zeros(3)  # m
-        self.lin_damp = 0.15    # velocity damping [s^-1] (demo anti-drift)
+        self.lin_damp = 0.8    # velocity damping [s^-1] (demo anti-drift)
         self.acc_bias_world = np.zeros(3)  # m/s²
 
 
@@ -292,6 +292,8 @@ class RocketView(gl.GLViewWidget):
         if self._accel is not None:
             ax, ay, az = self._accel
             g_line += f" | a(g): {ax:+5.2f} {ay:+5.2f} {az:+5.2f}"
+        p = self.pos
+        g_line += f" | p(m): {p[0]:+5.2f} {p[1]:+5.2f} {p[2]:+5.2f}"
 
 
         # then build the text
@@ -321,24 +323,22 @@ class RocketView(gl.GLViewWidget):
         ang, axis = rot_to_axis_angle(R_delta)
         if ang > 1e-6:
             deg = math.degrees(ang)
-            for item in self.parts:          # body, cone, nozzle, fins, axes
-                item.rotate(deg, axis[0], axis[1], axis[2])
+            px, py, pz = self.draw_pos.tolist()   # world pivot: current group position
+            for item in self.parts:
+                # move to pivot in WORLD coords, rotate in WORLD, move back
+                item.translate(-px, -py, -pz, local=False)
+                item.rotate(deg, axis[0], axis[1], axis[2], local=False)
+                item.translate(+px, +py, +pz, local=False)
+
 
         self.draw_R = R_smooth
 
         # --- translate by world delta since last frame, this translates the rocket ---
         dpos_world = self.pos - self.draw_pos
-        if np.linalg.norm(dpos_world) > 0:
-            # GLMeshItem.translate uses the item's current local axes.
-            # Convert the world delta into the current local frame of the rocket:
-            dpos_local = self.draw_R.T @ dpos_world
+        if np.any(dpos_world):
             for item in self.parts:
-                item.translate(dpos_local[0], dpos_local[1], dpos_local[2])
+                item.translate(dpos_world[0], dpos_world[1], dpos_world[2], local=False)
             self.draw_pos = self.pos.copy()
-
-        # show positional data in HUD
-        p = self.pos
-        g_line += f" | p(m): {p[0]:+5.2f} {p[1]:+5.2f} {p[2]:+5.2f}"
 
 
     def _mark_packet(self):
