@@ -1,5 +1,5 @@
 import sys
-from PyQt6 import QtWidgets, QtCore;
+from PyQt6 import QtWidgets, QtCore
 
 def main():
 
