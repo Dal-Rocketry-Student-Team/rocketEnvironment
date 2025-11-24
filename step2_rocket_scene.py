@@ -75,7 +75,8 @@ def rot_to_axis_angle(R):
 
 class SerialWorker(QtCore.QObject):
     newQuat = QtCore.pyqtSignal(float, float, float, float)          # w,x,y,z
-    newIMU  = QtCore.pyqtSignal(float, float, float, float, float, float)  # gx,gy,gz, ax,ay,az
+    newIMU  = QtCore.pyqtSignal(float, float, float, float, float, float)   # gx,gy,gz, ax,ay,az
+    newIMUdt = QtCore.pyqtSignal(float, float, float, float, float, float, float)   # gx,gy,gz, ax,ay,az, dt
     status  = QtCore.pyqtSignal(str)
     stopped = False
 
@@ -83,6 +84,7 @@ class SerialWorker(QtCore.QObject):
         super().__init__()
         self.port = port
         self.baud = baud
+        self._prev_tick = None
 
     @QtCore.pyqtSlot()
     def run(self):
@@ -103,11 +105,19 @@ class SerialWorker(QtCore.QObject):
                         if len(parts) < 12:
                             continue
                         # q0..q3 (assumed q0 = w)
+                        tick = int(parts[1])
                         w = float(parts[2]); x = float(parts[3]); y = float(parts[4]); z = float(parts[5])
                         gx = float(parts[6]); gy = float(parts[7]); gz = float(parts[8])
                         ax = float(parts[9]); ay = float(parts[10]); az = float(parts[11])
+
                         self.newQuat.emit(w, x, y, z)
                         self.newIMU.emit(gx, gy, gz, ax, ay, az)
+
+                        if self._prev_tick is not None:
+                            dt = max(1e-4, min(0.05, (tick - self._prev_tick) / 1000.0))    # clamp to 0.1 ms .. 50 ms
+                            self.newIMUdt.emit(gx, gy, gz, ax, ay, az, dt)
+                        self._prev_tick = tick
+
                     except Exception:
                         # ignore malformed lines
                         continue
@@ -218,6 +228,32 @@ class RocketView(gl.GLViewWidget):
         self._timer.timeout.connect(self._frame_update)
         self._timer.start()
 
+        # --- variables for drawing position from acceleration ---
+        self.g0 = 9.80665  # m/s²
+        self.pos = np.zeros(3)  # m
+        self.vel = np.zeros(3)  # m/s
+        self.draw_pos = np.zeros(3)  # m
+        self.lin_damp = 0.15    # velocity damping [s^-1] (demo anti-drift)
+        self.acc_bias_world = np.zeros(3)  # m/s²
+
+
+    def integrate_motion(self, ax_g, ay_g, az_g, dt):
+        """
+        Integrate translation from accel:
+        - a_body is in g
+        - rotate to world with current_R
+        - subtract gravity
+        - damp velocity a bit to keep the demo stable
+        """
+        a_body = np.array([ax_g, ay_g, az_g], float)                # g
+        a_world_g = self.current_R @ a_body                         # rotate to world
+        a_world = a_world_g * self.g0 - np.array([0, 0, self.g0])   # m/s^2 removes gravity
+        a_world -= self.acc_bias_world                              # bias correction to help drift
+
+        # integrating
+        self.vel += a_world * dt               # m/s
+        self.vel *= (1.0 - self.lin_damp * dt)   # simple linear damping
+        self.pos += self.vel * dt               # m, this is what we want to draw toward
 
     
     def _add_fins(self, *, n = 4, z_base = 0.2, span = 0.6, root_chord = 0.8, sweep = 0.2, thickness = 0.03):
@@ -290,6 +326,21 @@ class RocketView(gl.GLViewWidget):
 
         self.draw_R = R_smooth
 
+        # --- translate by world delta since last frame, this translates the rocket ---
+        dpos_world = self.pos - self.draw_pos
+        if np.linalg.norm(dpos_world) > 0:
+            # GLMeshItem.translate uses the item's current local axes.
+            # Convert the world delta into the current local frame of the rocket:
+            dpos_local = self.draw_R.T @ dpos_world
+            for item in self.parts:
+                item.translate(dpos_local[0], dpos_local[1], dpos_local[2])
+            self.draw_pos = self.pos.copy()
+
+        # show positional data in HUD
+        p = self.pos
+        g_line += f" | p(m): {p[0]:+5.2f} {p[1]:+5.2f} {p[2]:+5.2f}"
+
+
     def _mark_packet(self):
         self._last_pkt_t = time.time()
 
@@ -350,6 +401,7 @@ def main():
     thread.started.connect(worker.run)
     worker.newQuat.connect(view.set_quaternion)
     worker.newIMU.connect(view.set_imu)
+    worker.newIMUdt.connect(lambda gx,gy,gz,ax,ay,az,dt: view.integrate_motion(ax, ay, az, dt))
     worker.status.connect(lambda s: print("[SERIAL]", s))
     thread.start()
 
