@@ -40,6 +40,7 @@ accelerometer data, and streams it over a serial port in the same format as the 
 
 A virtual com port connection NEEDS to be setup for this to be
 [ quaternion_simulator.py ]  ->  COM[number1]  ===virtual cable===  COM[number2]  ->  [ your viewer ]
+
 quaternion_simulator.py writes to COM[number1] and the rocket scene script reads from COM[number2]
 
 This can be setup using a virtual com port tool like com0com, install through this video: https://www.youtube.com/watch?v=5RIcez2Vpdk
