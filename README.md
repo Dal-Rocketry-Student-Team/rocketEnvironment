@@ -34,6 +34,25 @@ Windows: COM3, COM7, …
 Linux: /dev/ttyACM0 or /dev/ttyUSB0
 macOS: /dev/tty.usbmodem* or /dev/tty.usbserial*
 
+### (optional) 7) quaternion simulator:
+This script simulates an IMU by generating synthetic quaternion, gyro, and
+accelerometer data, and streams it over a serial port in the same format as the stm32.
+
+A virtual com port connection NEEDS to be setup for this to be
+[ quaternion_simulator.py ]  ->  COM[number]  ===virtual cable===  COM[number]  ->  [ your viewer ]
+          writes                                                                        reads
+
+This can be setup using a virtual com port tool like com0com, install through this video: https://www.youtube.com/watch?v=5RIcez2Vpdk
+
+The script can be started with various arguments.
+Examples:
+
+python imu_sim.py --port COM[number] --mode rot --rate-hz 100 --yaw-rate 30 --roll-rate 10
+
+python imu_sim.py --port COM[number] --mode trans --a-amp-g 0.05 --a-freq 0.5 --a-dir x
+
+python imu_sim.py --port COM[number] --mode both --yaw-rate 20 --roll-rate 10 --a-amp-g 0.03 --a-freq 0.7 --a-dir y
+
 # What this is for
 
 Visual check of IMU fusion (quaternion/Euler) and axis alignment.
@@ -65,6 +84,8 @@ Not a flight controller and not for mission-critical GNC. It’s a visualization
 - Send newline-terminated ASCII lines like:
 
 - IMU,<tick_ms>, q0, q1, q2, q3, gx, gy, gz, ax, ay, az
+
+- Added new quaternion simulator tool to debug the virtual environment
 
 ### Where:
 

@@ -396,7 +396,7 @@ def main():
 
     # ---- Serial wiring ----
     thread = QtCore.QThread()
-    worker = SerialWorker(port="COM4", baud=115200)
+    worker = SerialWorker(port="COM12", baud=115200)
     worker.moveToThread(thread)
     thread.started.connect(worker.run)
     worker.newQuat.connect(view.set_quaternion)
